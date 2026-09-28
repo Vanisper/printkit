@@ -35,7 +35,7 @@ printkit 的首个落地场景是保留这些业务单据的排版资产，让�
 | [领域术语](CONTEXT.md) | 打印任务、执行尝试、文档、设备与状态的统一定义 |
 | [架构草案](docs/architecture.md) | 模块职责、接入方式、文档流程和技术候选 |
 | [验证计划](docs/validation-plan.md) | 技术验证步骤、测试矩阵和选型条件 |
-| [参考项目](docs/reference-projects.md) | LODOP、PrintBridge、HttpPrinter 等项目的调研依据 |
+| [参考项目](docs/reference-projects.md) | LODOP、PrintBridge、HttpPrinter、PrintHub 等项目的调研依据 |
 | [协作约定](AGENTS.md) | 项目工作方式与中文注释规范 |
 | [Git 管理](CONTRIBUTING.md) | 分支、提交、验证和远程协作约定 |
 

@@ -21,6 +21,7 @@ PrintKit 当前定位是独立、通用的本地打印系统。Web bridge、桌�
 | PrintBridge | WebSocket、本机 Agent、CLI 运维、远程轮询 | 自述三平台 Desktop；Linux 有 systemd Headless 实现 | 已具备 HTML 转 PDF；不能当作单纯文件转发器 |
 | print-bridge-jssdk | 浏览器或 Node.js 经 WebSocket 提交任务 | SDK 依赖独立 Agent | SDK 不承担本机渲染、系统服务或驱动职责 |
 | HttpPrinter | 本地接口、网页静默打印、报表设计、打印浏览器等 | 下载目录有 Windows、Linux 包 | macOS、无人登录和状态精确定义待验证 |
+| PrintHub（defuj/printhub） | 浏览器通过 Web Bluetooth / WebUSB 发送 ESC/POS 热敏票据指令 | README 提供浏览器兼容表和各系统 USB 设置说明 | 属于浏览器设备接入参考，不能据此认定支持系统驱动队列或无人登录服务 |
 
 表中事实的具体来源、版本和限制见下文，不能将“运行于三平台”与“三平台无人登录自动运行”视为同一个结论。
 
@@ -85,6 +86,24 @@ PrintKit 当前定位是独立、通用的本地打印系统。Web bridge、桌�
 **待验证。**本轮没有充分材料确认 macOS 本机执行、无人登录生命周期、现代 CSS 保真范围或打印完成字段的设备级语义；这些未知项不等于不支持。官网的资源优化、状态监控描述尚无本轮可复现的性能或出纸验证数据。
 
 官网列有商业购买与源码版本方案，但本轮未核对完整许可和再分发条款；不根据价格卡片推断二次开发授权范围。
+
+## PrintHub（defuj/printhub）
+
+仓库基线：`47fca4b5ef0fc7e6efebc79799e859f422d991b6`。本轮所读 Git 树仅含说明、演示页面和静态资产，没有完整库源码目录、`package.json` 或独立 `LICENSE` 文件。[固定版本仓库](https://github.com/defuj/printhub/tree/47fca4b5ef0fc7e6efebc79799e859f422d991b6)
+
+**定位与能力：项目自述。**PrintHub 是面向 Bluetooth / USB 热敏打印机的 JavaScript 库，提供 58 / 80 毫米票据的文字、双列、图片、二维码和条码接口。它适合作为票据内容接口和设备接入方式的参考，不能仅因名称接近打印平台，就与本地后台代理等同。[README](https://github.com/defuj/printhub/blob/47fca4b5ef0fc7e6efebc79799e859f422d991b6/readme.md)
+
+**版本：仓库与发布包需要分开。**演示页面固定从 CDN 加载 `printhub@1.2.1`，库的实现应依据该发布包核实，不能把演示仓库的提交号当作库源码提交号，也不能用未固定版本的 `latest` 作为可复查基线。[演示入口](https://github.com/defuj/printhub/blob/47fca4b5ef0fc7e6efebc79799e859f422d991b6/index.html#L325)
+
+**实现：存在发布代码证据。**已审阅的 `1.2.1` 发布包使用 `navigator.bluetooth` 和 `navigator.usb` 连接设备，生成 ESC/POS 字节，再通过 GATT `writeValue()` 或 USB `transferOut()` 发送。这是浏览器设备直连路径，不能等同于将 HTML/CSS 排版后提交系统打印队列。[固定版本发布实现](https://cdn.jsdelivr.net/npm/printhub@1.2.1/dist/index.js)
+
+**回调：连接成功不代表打印完成。**README 将 `onReady` 定义为连接成功、`onFailed` 定义为连接失败；已审阅打印方法等待的是数据写入，未见设备完成通知链路。这些连接回调和写入完成不能作为系统队列接受或物理出纸的证明。任务持久化、重试、执行历史和设备级结果反馈需要另行核实。[连接接口说明](https://github.com/defuj/printhub/blob/47fca4b5ef0fc7e6efebc79799e859f422d991b6/readme.md#connecting-to-printer-and-printing-text) · [发布实现](https://cdn.jsdelivr.net/npm/printhub@1.2.1/dist/index.js)
+
+**平台与运行方式：待验证。**README 列出浏览器兼容表，以及 Windows、Linux、macOS 的 USB 设置步骤；其中 Windows 提到 WinUSB 驱动。这些说明不是三平台系统打印队列或开机无人登录服务的验收证据，也不能推出任意 USB 打印机或 Bluetooth 打印机都可用。本轮未执行硬件测试。[USB 与浏览器说明](https://github.com/defuj/printhub/blob/47fca4b5ef0fc7e6efebc79799e859f422d991b6/readme.md#requirements-for-usb-printer)
+
+**许可：来源存在不一致。**该提交的 README 顶部徽章写 MIT，末尾 License 段写 ISC；`1.2.1` 的 npm 元数据和包内 `package.json` 也写 ISC，但所读仓库和发布包均没有独立许可正文。不能仅凭徽章概括复用条件，采用代码前应核对实际版本及其依赖的许可文件。[许可段落](https://github.com/defuj/printhub/blob/47fca4b5ef0fc7e6efebc79799e859f422d991b6/readme.md#license) · [npm 版本元数据](https://registry.npmjs.org/printhub/1.2.1)
+
+对 PrintKit 的借鉴重点是热敏票据的小接口与传输适配；现有双联单的 HTML/CSS 迁移、系统驱动打印和后台任务生命周期仍需沿各自路径验证。
 
 ## 可选补充：QZ Tray
 
