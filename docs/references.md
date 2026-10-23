@@ -1,6 +1,6 @@
 # 参考项目
 
-本文整理 2026-09-29 的既有调研，作为 printkit 设计与验证的参考。材料来自官方文档、公开源码及发布清单；当时未安装产品、连接打印机或执行性能测试，本次整理也未重新核实后续版本。
+以下产品资料来自 2026-09-29 的调研，依据官方文档、公开源码及发布清单，未安装产品、连接打印机或执行性能测试，也未重新核实产品后续版本。文末的技术选型依据于 2026-10-24 单独核对。
 
 | 项目 | 定位 | 主要参考价值 |
 | --- | --- | --- |
@@ -72,3 +72,44 @@ Headless 文档列出 Windows、Linux、macOS 命令，并要求预先配置证�
 - 分别测试桌面登录、锁屏、注销和开机未登录时的任务执行
 - 区分任务接收、系统提交、系统报告结束和物理出纸，验证结果未知时的恢复与补打
 - 在相同文档、设备和驱动下测量完整进程树的资源占用与耗时
+
+## 技术选型依据（2026-10-24）
+
+本节重新核对语言及工具的官方文档、维护者文档和源码，未运行语言性能对比。当前没有可用打印机，先在 macOS 开发机验证提交、持久化、HTML 转 PDF、查询和恢复；文件输出只证明产物生成，设备输出仍需后续验收。
+
+### Go、Rust 与 Zig
+
+下面记录事实依据，结合项目作出的选择见 [设计文档](design.md)。
+
+**Go 的现成能力。** `net/http` 提供服务端，`os/exec` 管理外部进程，`database/sql` 提供事务与连接接口，但不自带 SQLite 驱动。chromedp 通过 CDP 驱动浏览器，不需要额外的 WebDriver；浏览器程序仍是独立依赖。[HTTP](https://pkg.go.dev/net/http) · [进程](https://pkg.go.dev/os/exec) · [数据库](https://pkg.go.dev/database/sql) · [chromedp](https://github.com/chromedp/chromedp)
+
+**Go 的原生边界。** Windows 可通过 `x/sys/windows` 加载系统 DLL 并调用函数，Windows Service 也有 `x/sys/windows/svc` 支持，因此调用原生 API 不必然引入 cgo。若后端使用 cgo 连接 C 库，交叉编译需要对应的 C 交叉编译器；结构布局、指针、回调和库生命周期仍需逐项处理。[DLL 调用源码](https://github.com/golang/sys/blob/master/windows/dll_windows.go) · [Windows Service](https://pkg.go.dev/golang.org/x/sys/windows/svc) · [cgo](https://pkg.go.dev/cmd/cgo)
+
+**Rust 的实际优势。** Microsoft 的 windows-rs 提供 C 风格、COM 和 WinRT 绑定，也提供服务相关组件，可减少自行声明 Windows 接口的工作。它并不替代 PDF 引擎或打印驱动；调用外部 C 库仍涉及 `unsafe`、ABI 和链接设置。[windows-rs](https://github.com/microsoft/windows-rs) · [Rust FFI](https://doc.rust-lang.org/nomicon/ffi.html)
+
+**稳定性要区分语言与依赖。** Go 1 对语言和标准库提供兼容性承诺，`golang.org/x` 等子仓库要求更宽松。Rust 的稳定语言功能持续支持，edition 迁移由项目选择。两者的兼容性承诺都不能代替第三方库版本管理。[Go 兼容性](https://go.dev/doc/go1compat) · [Rust editions](https://doc.rust-lang.org/edition-guide/editions/index.html)
+
+**Zig 需要按当前版本评估。** 查询时官方稳定发布为 0.17.0，发布时间为 2026-10-01；发布说明仍在推进语言稳定，并包含语言和构建系统迁移。例如 `@cImport` 已移除，C 翻译改用 ZSF 的独立 `translate-c` 包。其原生互操作能力成立，但当前项目需额外承担工具链变动，选择它不能只依据旧版示例或二进制体积印象。[下载页](https://ziglang.org/download/) · [0.17.0 发布说明](https://ziglang.org/download/0.17.0/release-notes.html#C-Translation-Moving-to-External-Package)
+
+### 对原型和后续实现的影响
+
+选型判断是先用 Go 完成任务服务，固定 Go、chromedp、SQLite 驱动和浏览器的版本。首期围绕文件产物验证软件链路，将真实打印限制在独立后端内；完整实现方案见 [设计文档](design.md)。
+
+- 主服务采用不依赖 cgo 的组件，可以简化这一部分的构建；完整交付仍需浏览器，真实打印阶段还会涉及平台组件、驱动和字体。
+- 如果后续核心工作转为大量 Windows COM / WinRT 或 PDF 原生库集成，再用一个真实后端验证 Rust 是否减少绑定和维护工作；先比较后端实现，无需预先安排整体重写。
+- Zig 适合在出现明确的底层组件或 C 工具链需求时单独评估；当前没有足够收益支持为主服务承担迁移成本。
+- 语言不会消除渲染与打印依赖。低配置机器的收益需测量主服务、Chromium 和打印转换进程的总资源占用，不能由 Go、Rust 或 Zig 的一般性能结论推定。
+
+### 渲染、存储与 Web 接入
+
+chromedp 的 PDF 示例通过 CDP 的 `Page.printToPDF` 导出页面；协议提供背景、纸张与 CSS 页面尺寸优先等设置。这支持先复用打印 CSS 的方案，业务字体、资源和分页仍需样本验证。[PDF 示例](https://github.com/chromedp/examples/blob/main/pdf/main.go) · [协议绑定源码](https://github.com/chromedp/cdproto/blob/main/page/page.go)
+
+`modernc.org/sqlite` 是不依赖 cgo 的 `database/sql` 驱动，文档列出 macOS、Windows 和 Linux 的受支持架构，并要求保持其 `modernc.org/libc` 依赖版本匹配。SQLite 事务提供原子提交；原型将小文档与状态放入同一数据库，是为了简化一致性处理，未据此主张存储性能更优。[驱动文档](https://pkg.go.dev/modernc.org/sqlite) · [SQLite 原子提交](https://www.sqlite.org/atomiccommit.html)
+
+Chrome 的本地网络访问机制涉及网页到本机服务的权限。HTTP 轮询能简化原型接口，但真实 HTTPS 来源仍需按浏览器版本核对授权、CSP 和跨域行为；原型保留这项独立验收。[Chrome 本地网络访问](https://developer.chrome.com/blog/local-network-access)
+
+### 后续打印后端
+
+CUPS `lp` 默认输出系统任务编号；`lpstat` 默认只显示未结束任务，适合初步排查。需要明确状态时，使用结构化 CUPS / IPP 接口获取 `job-state` 和 `job-state-reasons`。IPP 允许 `completed` 配合 `queued-in-device` 表示交给不能继续报告状态的下游，因此仍需保留反馈来源。[lp](https://apple.github.io/cups/doc/man-lp.html) · [lpstat](https://apple.github.io/cups/doc/man-lpstat.html) · [CUPS API](https://apple.github.io/cups/doc/cupspm.html) · [IPP 状态定义](https://www.rfc-editor.org/rfc/rfc8011.html#section-5.3.7)
+
+Windows 的 RAW 数据需符合设备要求，通用 PDF 输入还需要转换。可验证的候选路径是 PDFium 渲染到打印机 HDC，配合 GDI `StartDocW` 取得系统 JobId，再查询队列。Sumatra CLI 提供静默打印和退出码，但其公开文档没有返回系统 JobId 的协议，适合出纸试验，不能据此建立完整任务状态。[RAW 数据类型](https://learn.microsoft.com/en-us/windows-hardware/drivers/print/raw-data-type) · [StartDocW](https://learn.microsoft.com/en-us/windows/win32/api/wingdi/nf-wingdi-startdocw) · [PDFium 接口](https://pdfium.googlesource.com/pdfium/+/refs/heads/main/public/fpdfview.h) · [Sumatra CLI](https://www.sumatrapdfreader.org/docs/Command-line-arguments)
