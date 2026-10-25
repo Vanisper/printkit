@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>printkit · 文档验证</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='6' y='3' width='20' height='26' rx='3' fill='%232c6653'/%3E%3Cpath d='M11 11h10M11 16h10M11 21h6' stroke='white' stroke-width='2'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <main>
+    <header class="masthead">
+      <div><p class="eyebrow">PRINTKIT / LOCAL DOCUMENTS</p><h1>让文档准备就绪。</h1><p class="intro">提交 HTML 或 PDF，观察任务执行，下载生成的文档。</p></div>
+      <span class="mode">PDF 产物模式</span>
+    </header>
+    <div class="workspace">
+      <section class="panel composer" aria-labelledby="submit-title">
+        <div class="section-heading"><span class="step">01</span><h2 id="submit-title">提交文档</h2></div>
+        <form id="submit-form">
+          <fieldset>
+            <legend>本机服务</legend>
+            <label for="api-url">API 地址</label><input id="api-url" type="url" required spellcheck="false" placeholder="http://127.0.0.1:9148" autocomplete="off">
+            <label for="token">调用方令牌</label><input id="token" type="password" required autocomplete="off" spellcheck="false" placeholder="粘贴服务配置中的令牌">
+            <p class="hint">令牌只在当前页面中使用。更换页面来源时，需在服务配置中允许该 Origin。</p>
+          </fieldset>
+          <fieldset>
+            <legend>输入内容</legend>
+            <div class="row"><div><label for="kind">格式</label><select id="kind"><option value="html">HTML → PDF</option><option value="pdf">PDF 原样保存</option></select></div><div><label for="title">标题</label><input id="title" value="双联送货单" maxlength="80"></div></div>
+            <label for="document">选择文件</label><input id="document" type="file" accept=".html,.htm,text/html">
+            <p class="hint" id="file-hint">未选文件时使用下方样例。HTML 需包含内联 CSS，并使用 data URL 携带图片和字体。</p>
+            <details id="sample-details"><summary>查看或编辑双联单 HTML 样例</summary><label class="sr-only" for="sample">样例 HTML</label><textarea id="sample" rows="13" spellcheck="false"></textarea></details>
+            <label for="request-key">请求标识</label><div class="key-row"><input id="request-key" required maxlength="128" spellcheck="false"><button id="new-key" type="button" class="secondary">换一个</button></div>
+            <p class="hint">相同标识和内容返回同一任务；修改文档后请更换标识。</p>
+          </fieldset>
+          <button class="primary" id="submit-button" type="submit">提交文档 <span aria-hidden="true">↗</span></button>
+          <p id="feedback" role="status" aria-live="polite"></p>
+        </form>
+      </section>
+      <section class="panel results" aria-labelledby="results-title">
+        <div class="section-heading"><span class="step">02</span><h2 id="results-title">任务与产物</h2><span class="live-note">自动查询</span></div>
+        <form id="lookup-form"><label for="lookup-id">按任务编号恢复查询</label><div class="key-row"><input id="lookup-id" required placeholder="粘贴已受理的任务编号" spellcheck="false"><button class="secondary" type="submit">查询</button></div></form>
+        <p class="notice">“就绪”表示 PDF 已生成或保存。本轮未连接打印队列及真实设备。</p>
+        <div id="jobs" aria-live="polite"><div id="empty-state"><span aria-hidden="true">▤</span><h3>第一份文档，从这里开始</h3><p>提交后的任务会在这里显示。关闭页面后，已受理的任务仍由本机服务继续执行。</p></div></div>
+      </section>
+    </div>
+    <footer>本地异步处理 · HTML 静态排版 · PDF 可下载<span>printkit / 最小原型</span></footer>
+  </main>
+</body>
+</html>
