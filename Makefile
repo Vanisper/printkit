@@ -2,7 +2,7 @@ GO ?= go
 CHROME ?=
 VERSION ?= $(shell git describe --tags --always --dirty)
 
-.PHONY: fmt fmt-check vet test race integration check build run
+.PHONY: fmt fmt-check vet test race integration acceptance check build run
 
 fmt:
 	$(GO) fmt ./...
@@ -21,6 +21,9 @@ race:
 
 integration:
 	PRINTKIT_CHROME_TEST=1 PRINTKIT_CHROME_PATH="$(CHROME)" $(GO) test -count=1 ./...
+
+acceptance:
+	PRINTKIT_ACCEPTANCE_TEST=1 PRINTKIT_CHROME_PATH="$(CHROME)" $(GO) test -count=1 -run '^TestAcceptance' ./...
 
 check: fmt-check vet test
 

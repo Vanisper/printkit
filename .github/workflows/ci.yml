@@ -46,3 +46,6 @@ jobs:
           PRINTKIT_CHROME_TEST: "1"
           PRINTKIT_CHROME_PATH: /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
         run: go test -count=1 ./...
+      - name: Verify document and browser acceptance flows
+        if: runner.os == 'macOS'
+        run: make acceptance CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
