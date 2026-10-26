@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -327,7 +328,13 @@ func TestErrorMappingDoesNotLeakDetails(t *testing.T) {
 		{errors.New("sqlite: sensitive internal path"), 500, "internal_error"},
 	} {
 		t.Run(test.code, func(t *testing.T) {
-			handler := testHandler(t, &backendStub{owner: "alice", err: fmt.Errorf("backend detail: %w", test.err)})
+			var logs bytes.Buffer
+			opts := testOptions()
+			opts.Logger = slog.New(slog.NewJSONHandler(&logs, nil))
+			handler, err := New(&backendStub{owner: "alice", err: fmt.Errorf("backend detail: %w", test.err)}, opts)
+			if err != nil {
+				t.Fatal(err)
+			}
 			response := call(handler, "GET", "/v1/jobs/job-1/artifact", "alice-token", "", nil, "")
 			requireStatus(t, response, test.status)
 			var body struct {
@@ -338,6 +345,62 @@ func TestErrorMappingDoesNotLeakDetails(t *testing.T) {
 			}
 			if body.Error.Code != test.code || strings.Contains(response.Body.String(), "sensitive") || strings.Contains(response.Body.String(), "backend detail") {
 				t.Fatalf("错误内容不符合契约：%s", response.Body.String())
+			}
+			if test.status != http.StatusInternalServerError && logs.Len() != 0 {
+				t.Fatalf("预期的业务错误不应写入异常日志：%s", logs.String())
+			}
+		})
+	}
+}
+
+func TestInternalErrorsLogCorrelationWithoutRequestContents(t *testing.T) {
+	const detail = "sqlite: database or disk is full"
+	const document = "%PDF-private-document-contents"
+	const title = "private-document-title"
+	for _, test := range []struct {
+		name, method, path, operation, identifierName, identifier string
+	}{
+		{"提交", "POST", "/v1/jobs", "POST /v1/jobs", "request_key", "request-1"},
+		{"查询", "GET", "/v1/jobs/job-1", "GET /v1/jobs/{id}", "job_id", "job-1"},
+		{"下载", "GET", "/v1/jobs/job-1/artifact", "GET /v1/jobs/{id}/artifact", "job_id", "job-1"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var logs bytes.Buffer
+			opts := testOptions()
+			opts.Logger = slog.New(slog.NewJSONHandler(&logs, nil))
+			handler, err := New(&backendStub{owner: "alice", err: errors.New(detail)}, opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body, contentType := multipartBody(t, inputPart{"metadata", `{"kind":"pdf","title":"` + title + `"}`}, inputPart{"document", document})
+			response := call(handler, test.method, test.path+"?secret=private-query-value", "alice-token", "", bytes.NewReader(body), contentType)
+			requireStatus(t, response, http.StatusInternalServerError)
+			var record map[string]any
+			decoder := json.NewDecoder(&logs)
+			if err := decoder.Decode(&record); err != nil {
+				t.Fatalf("未记录可读取的错误日志：%v", err)
+			}
+			if decoder.Decode(new(any)) != io.EOF {
+				t.Fatal("一次异常应只记录一条日志")
+			}
+			for key, want := range map[string]string{
+				"level": "ERROR", "operation": test.operation, "caller_id": "alice", "error": detail, test.identifierName: test.identifier,
+			} {
+				if record[key] != want {
+					t.Errorf("日志字段 %s = %v，期望 %q", key, record[key], want)
+				}
+			}
+			logged, err := json.Marshal(record)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, secret := range []string{"alice-token", document, title, "private-query-value"} {
+				if bytes.Contains(logged, []byte(secret)) {
+					t.Errorf("日志包含请求中的敏感内容 %q", secret)
+				}
+			}
+			if strings.Contains(response.Body.String(), detail) {
+				t.Fatal("HTTP 响应泄露内部错误")
 			}
 		})
 	}

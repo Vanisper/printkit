@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"mime"
 	"net/http"
 	"net/url"
@@ -21,17 +22,23 @@ import (
 	"github.com/Vanisper/printkit/internal/jobs"
 )
 
-// Backend 通过调用方身份隔离任务，Submit 的布尔返回值表示是否新建任务
+// Backend 通过调用方身份隔离任务及其产物
 type Backend interface {
-	Submit(context.Context, jobs.Request) (jobs.Job, bool, error)
-	Get(context.Context, string, string) (jobs.Job, error)
-	Artifact(context.Context, string, string) ([]byte, string, error)
+	// Submit 持久化受理任务，布尔返回值表示是否新建；同键不同内容返回 jobs.ErrConflict
+	Submit(ctx context.Context, request jobs.Request) (jobs.Job, bool, error)
+	// Get 返回任务状态；不存在或不属于调用方的任务均返回 jobs.ErrNotFound
+	Get(ctx context.Context, callerID, jobID string) (jobs.Job, error)
+	// Artifact 返回 PDF 及其 SHA-256；不存在或不属于调用方时返回 jobs.ErrNotFound，未就绪时返回 jobs.ErrNotReady
+	Artifact(ctx context.Context, callerID, jobID string) ([]byte, string, error)
 }
 
-// Caller 定义一个调用方的身份、访问令牌及允许的浏览器来源
+// Caller 定义获得本机服务访问授权的调用方
 type Caller struct {
-	ID      string
-	Token   string
+	// ID 在配置中唯一，用于隔离任务归属
+	ID string
+	// Token 为调用方独享的 Bearer 令牌
+	Token string
+	// Origins 是不含路径或通配符的准确 HTTP(S) 来源；为空时仅接受未携带 Origin 的请求
 	Origins []string
 }
 
@@ -42,6 +49,8 @@ type Options struct {
 	AllowedHosts []string
 	// MaxInputBytes 为单个文档上限，零值使用 jobs.DefaultMaxInputBytes
 	MaxInputBytes int64
+	// Logger 记录未预期的任务服务错误，nil 时使用 slog.Default()
+	Logger *slog.Logger
 }
 
 type caller struct {
@@ -56,6 +65,7 @@ type api struct {
 	hosts      map[string]bool
 	origins    map[string]bool
 	inputLimit int64
+	logger     *slog.Logger
 }
 
 //go:embed demo
@@ -77,7 +87,10 @@ func New(backend Backend, opts Options) (http.Handler, error) {
 	if opts.MaxInputBytes < 1 || opts.MaxInputBytes > 1<<40 {
 		return nil, errors.New("文档大小上限无效")
 	}
-	a := &api{backend: backend, hosts: make(map[string]bool), origins: make(map[string]bool), inputLimit: opts.MaxInputBytes}
+	if opts.Logger == nil {
+		opts.Logger = slog.Default()
+	}
+	a := &api{backend: backend, hosts: make(map[string]bool), origins: make(map[string]bool), inputLimit: opts.MaxInputBytes, logger: opts.Logger}
 	for _, host := range opts.AllowedHosts {
 		u, err := url.Parse("http://" + host)
 		if err != nil || u.Host != host || u.Hostname() == "" || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.User != nil || strings.ContainsAny(host, "* \t\r\n") {
@@ -275,7 +288,7 @@ func (a *api) submit(w http.ResponseWriter, r *http.Request, callerID string) {
 	}
 	job, created, err := a.backend.Submit(r.Context(), jobs.Request{CallerID: callerID, Key: keys[0], Kind: metadata.Kind, Title: metadata.Title, Document: parts["document"]})
 	if err != nil {
-		writeBackendError(w, err)
+		a.writeBackendError(w, r, callerID, err)
 		return
 	}
 	status := http.StatusOK
@@ -289,7 +302,7 @@ func (a *api) submit(w http.ResponseWriter, r *http.Request, callerID string) {
 func (a *api) get(w http.ResponseWriter, r *http.Request, callerID string) {
 	job, err := a.backend.Get(r.Context(), callerID, r.PathValue("id"))
 	if err != nil {
-		writeBackendError(w, err)
+		a.writeBackendError(w, r, callerID, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, job)
@@ -298,7 +311,7 @@ func (a *api) get(w http.ResponseWriter, r *http.Request, callerID string) {
 func (a *api) artifact(w http.ResponseWriter, r *http.Request, callerID string) {
 	data, digest, err := a.backend.Artifact(r.Context(), callerID, r.PathValue("id"))
 	if err != nil {
-		writeBackendError(w, err)
+		a.writeBackendError(w, r, callerID, err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/pdf")
@@ -319,7 +332,7 @@ func writeParseError(w http.ResponseWriter, err error) {
 	writeError(w, http.StatusBadRequest, "invalid_multipart", "multipart 请求不完整或格式错误")
 }
 
-func writeBackendError(w http.ResponseWriter, err error) {
+func (a *api) writeBackendError(w http.ResponseWriter, r *http.Request, callerID string, err error) {
 	switch {
 	case errors.Is(err, jobs.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found", "任务不存在")
@@ -332,6 +345,16 @@ func writeBackendError(w http.ResponseWriter, err error) {
 	case errors.Is(err, jobs.ErrInvalid):
 		writeError(w, http.StatusBadRequest, "invalid_request", "任务参数无效")
 	default:
+		attrs := []slog.Attr{slog.String("operation", r.Pattern), slog.String("caller_id", callerID), slog.Any("error", err)}
+		name, identifier := "job_id", r.PathValue("id")
+		if r.Method == http.MethodPost {
+			name, identifier = "request_key", r.Header.Get("Idempotency-Key")
+		}
+		// 路径和请求头均由调用方提供，只记录有界且不含控制字符的关联标识
+		if identifier != "" && len(identifier) <= 128 && utf8.ValidString(identifier) && strings.TrimSpace(identifier) == identifier && strings.IndexFunc(identifier, unicode.IsControl) == -1 {
+			attrs = append(attrs, slog.String(name, identifier))
+		}
+		a.logger.LogAttrs(r.Context(), slog.LevelError, "HTTP 任务操作失败", attrs...)
 		writeError(w, http.StatusInternalServerError, "internal_error", "服务暂时无法处理请求")
 	}
 }

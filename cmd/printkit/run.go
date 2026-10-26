@@ -119,6 +119,7 @@ func serve(ctx context.Context, dir string, cfg config, errOut io.Writer) error 
 	handler, err := httpapi.New(service, httpapi.Options{
 		Callers: callers, MaxInputBytes: cfg.MaxInputBytes,
 		AllowedHosts: []string{listener.Addr().String(), net.JoinHostPort("localhost", port)},
+		Logger:       logger,
 	})
 	if err != nil {
 		return err
