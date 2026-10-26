@@ -38,7 +38,7 @@ HTML 输入为 UTF-8 静态打印稿：CSS 内联，图片和字体通过 data U
 | `make check` | 检查 gofmt，运行 go vet 和默认测试 |
 | `make race` | 运行竞态检查 |
 | `make integration` | 使用实际 Chrome 验证渲染和 HTTP 链路 |
-| `make acceptance` | 验证单据页数与 A4、跨域验证页和 CLI 中断恢复 |
+| `make acceptance` | 验证单据页数与 A4、跨域验证页、CLI 中断恢复与 Chrome 资源回收 |
 | `make build` | 无 cgo 构建，产物为 `bin/printkit` |
 | `make run` | 使用 `work/dev` 配置启动开发服务 |
 
@@ -64,7 +64,7 @@ go run ./cmd/printkit serve --data-dir work/dev
 cmd/printkit/             命令行、配置、模块组装与进程退出
 internal/httpapi/         HTTP 校验、授权、接口和嵌入验证页
 internal/jobs/            任务规则、SQLite 事务、串行执行与恢复
-internal/render/          排版设置、静态 HTML 校验与 Chrome 渲染
+internal/render/          排版设置、静态 HTML 校验、渲染子进程与 Chrome 回收
 testdata/                合成单据样例
 .github/workflows/        自动化检查与构建配置
 ```
