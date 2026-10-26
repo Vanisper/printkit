@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -19,6 +20,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/Vanisper/printkit/internal/render"
 	_ "modernc.org/sqlite"
 )
 
@@ -89,16 +91,21 @@ func (s *Service) Submit(ctx context.Context, req Request) (Job, bool, error) {
 	if err := s.validate(req); err != nil {
 		return Job{}, false, err
 	}
-	digest := requestDigest(req)
+	settingsJSON, err := settings(req.Kind)
+	if err != nil {
+		return Job{}, false, err
+	}
+	digest := requestDigest(req, settingsJSON)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Job{}, false, err
 	}
 	defer tx.Rollback()
-	var id, oldDigest string
-	err = tx.QueryRowContext(ctx, `SELECT id, request_sha256 FROM jobs WHERE caller_id = ? AND request_key = ?`, req.CallerID, req.Key).Scan(&id, &oldDigest)
+	var id, oldDigest, oldSettings string
+	err = tx.QueryRowContext(ctx, `SELECT id, request_sha256, settings FROM jobs WHERE caller_id = ? AND request_key = ?`, req.CallerID, req.Key).Scan(&id, &oldDigest, &oldSettings)
 	if err == nil {
-		if oldDigest != digest {
+		// 重复请求沿用受理时的设置，避免服务默认值变化使同一请求发生冲突
+		if oldDigest != requestDigest(req, oldSettings) {
 			return Job{}, false, ErrConflict
 		}
 		job, err := readJob(ctx, tx, req.CallerID, id)
@@ -114,7 +121,7 @@ func (s *Service) Submit(ctx context.Context, req Request) (Job, bool, error) {
 	now := time.Now().UTC()
 	inputHash := sha256Hex(req.Document)
 	_, err = tx.ExecContext(ctx, `INSERT INTO jobs (id, caller_id, request_key, request_sha256, kind, title, state, input_sha256, document, settings, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, id, req.CallerID, req.Key, digest, req.Kind, req.Title, StateQueued, inputHash, req.Document, settings(req.Kind), now.UnixNano(), now.UnixNano())
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, id, req.CallerID, req.Key, digest, req.Kind, req.Title, StateQueued, inputHash, req.Document, settingsJSON, now.UnixNano(), now.UnixNano())
 	if err != nil {
 		return Job{}, false, fmt.Errorf("保存任务: %w", err)
 	}
@@ -216,17 +223,18 @@ func sha256Hex(value []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func settings(kind Kind) string {
+func settings(kind Kind) (string, error) {
 	if kind == KindHTML {
-		return `{"paper":"A4","prefer_css_page_size":true,"print_background":true,"display_header_footer":false,"margin_mm":{"top":10,"right":10,"bottom":10,"left":10},"scale":1}`
+		data, err := json.Marshal(render.DefaultSettings())
+		return string(data), err
 	}
-	return `{}`
+	return `{}`, nil
 }
 
-func requestDigest(req Request) string {
+func requestDigest(req Request, settingsJSON string) string {
 	h := sha256.New()
 	// 长度前缀避免不同字段组合产生相同的拼接输入
-	for _, field := range [][]byte{[]byte(req.Kind), []byte(req.Title), []byte(settings(req.Kind)), req.Document} {
+	for _, field := range [][]byte{[]byte(req.Kind), []byte(req.Title), []byte(settingsJSON), req.Document} {
 		var size [8]byte
 		binary.BigEndian.PutUint64(size[:], uint64(len(field)))
 		h.Write(size[:])

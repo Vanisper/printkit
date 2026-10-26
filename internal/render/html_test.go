@@ -61,7 +61,7 @@ func TestConfigurationAndCancellation(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, _, err := r.Render(ctx, []byte("<p>hello</p>")); !errors.Is(err, context.Canceled) {
+	if _, _, err := r.Render(ctx, []byte("<p>hello</p>"), DefaultSettings()); !errors.Is(err, context.Canceled) {
 		t.Fatalf("want context cancellation, got %v", err)
 	}
 }

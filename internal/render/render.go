@@ -56,10 +56,14 @@ func New(opts Options) (*Renderer, error) {
 // Render 生成 PDF 并返回 Chrome 版本，ctx 控制启动、资源加载和输出读取的总时限
 //
 // 输入仅支持 UTF-8 静态 HTML、内联 CSS 和 data URL 资源，脚本或资源失败会使任务失败
+// settings 须为通过 Validate 的完整设置，排版采用该值而不补入默认值
 // 返回前等待独立浏览器退出并清理临时用户目录
-func (r *Renderer) Render(ctx context.Context, input []byte) ([]byte, string, error) {
+func (r *Renderer) Render(ctx context.Context, input []byte, settings Settings) ([]byte, string, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, "", err
+	}
+	if err := settings.Validate(); err != nil {
+		return nil, "", fmt.Errorf("排版设置无效: %w", err)
 	}
 	document, err := prepareHTML(input)
 	if err != nil {
@@ -124,11 +128,12 @@ func (r *Renderer) Render(ctx context.Context, input []byte) ([]byte, string, er
 	if err := guard.check(tab); err != nil {
 		return nil, version.Product, renderError(ctx, "检查浏览器资源", err)
 	}
-	yes, no, margin := true, false, 10/25.4
+	top, right := settings.MarginMM.Top/25.4, settings.MarginMM.Right/25.4
+	bottom, left := settings.MarginMM.Bottom/25.4, settings.MarginMM.Left/25.4
 	pdf, err := chromedp.Call(tab, page.PrintToPDF, page.PrintToPDFParams{
-		PrintBackground: &yes, DisplayHeaderFooter: &no, PreferCSSPageSize: &yes,
+		PrintBackground: &settings.PrintBackground, DisplayHeaderFooter: &settings.DisplayHeaderFooter, PreferCSSPageSize: &settings.PreferCSSPageSize,
 		PaperWidth: 210 / 25.4, PaperHeight: 297 / 25.4,
-		MarginTop: &margin, MarginBottom: &margin, MarginLeft: &margin, MarginRight: &margin, Scale: 1,
+		MarginTop: &top, MarginBottom: &bottom, MarginLeft: &left, MarginRight: &right, Scale: settings.Scale,
 		TransferMode: page.PrintToPDFTransferModeReturnAsStream,
 	})
 	if err != nil {

@@ -113,6 +113,7 @@ type execution struct {
 	id       string
 	kind     Kind
 	document []byte
+	settings string
 	attempt  int
 }
 
@@ -146,7 +147,7 @@ func (s *Service) claim(ctx context.Context) (execution, error) {
 	}
 	defer tx.Rollback()
 	var task execution
-	err = tx.QueryRowContext(ctx, `SELECT id, kind, document, attempt_count + 1 FROM jobs WHERE state = 'queued' ORDER BY seq LIMIT 1`).Scan(&task.id, &task.kind, &task.document, &task.attempt)
+	err = tx.QueryRowContext(ctx, `SELECT id, kind, document, settings, attempt_count + 1 FROM jobs WHERE state = 'queued' ORDER BY seq LIMIT 1`).Scan(&task.id, &task.kind, &task.document, &task.settings, &task.attempt)
 	if err != nil {
 		return execution{}, err
 	}

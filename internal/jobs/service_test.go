@@ -12,11 +12,13 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/Vanisper/printkit/internal/render"
 )
 
 type renderFunc func(context.Context, []byte) ([]byte, string, error)
 
-func (f renderFunc) Render(ctx context.Context, document []byte) ([]byte, string, error) {
+func (f renderFunc) Render(ctx context.Context, document []byte, _ render.Settings) ([]byte, string, error) {
 	return f(ctx, document)
 }
 

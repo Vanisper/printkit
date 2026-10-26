@@ -39,7 +39,7 @@ func TestChromePrintCSSAndImages(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	input := `<!doctype html><style>@page { size: 100mm 150mm; margin: 10mm } @media print { body { color: black } } h1 {background-image: url("` + pixel + `")}</style><h1>printkit 双联单</h1><img src="` + pixel + `">`
-	pdf, version, err := r.Render(ctx, []byte(input))
+	pdf, version, err := r.Render(ctx, []byte(input), DefaultSettings())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,8 +68,30 @@ func TestChromeEmbeddedFontAndVectorImage(t *testing.T) {
 	input := `<style>@font-face{font-family:fixture;src:url(data:font/woff;base64,` + base64.StdEncoding.EncodeToString(font) + `)}p{font-family:fixture}</style><p>A</p><img src="data:image/svg+xml;base64,` + svg + `">`
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	if _, _, err := r.Render(ctx, []byte(input)); err != nil {
+	if _, _, err := r.Render(ctx, []byte(input), DefaultSettings()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestChromeUsesProvidedPageMargins(t *testing.T) {
+	r := integrationRenderer(t, 0)
+	input := []byte(`<style>html,body{margin:0}div{height:260mm;background:#ccc}</style><div>页面边距</div>`)
+	for _, test := range []struct {
+		margin float64
+		pages  int
+	}{{10, 1}, {30, 2}} {
+		settings := DefaultSettings()
+		settings.MarginMM.Top, settings.MarginMM.Bottom = test.margin, test.margin
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		pdf, _, err := r.Render(ctx, input, settings)
+		cancel()
+		if err != nil {
+			t.Fatal(err)
+		}
+		pages := len(regexp.MustCompile(`/Type\s*/Page\b`).FindAll(pdf, -1))
+		if pages != test.pages {
+			t.Fatalf("边距 %g mm：页数=%d，期望 %d", test.margin, pages, test.pages)
+		}
 	}
 }
 
@@ -97,7 +119,7 @@ func TestChromeRejectsMissingResourcesWithoutNetwork(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 			defer cancel()
-			pdf, _, err := r.Render(ctx, []byte(input))
+			pdf, _, err := r.Render(ctx, []byte(input), DefaultSettings())
 			if err == nil || pdf != nil {
 				t.Fatalf("expected rejection, got %d bytes, %v", len(pdf), err)
 			}
@@ -115,7 +137,7 @@ func TestChromeOutputLimit(t *testing.T) {
 	r := integrationRenderer(t, 100)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	if _, _, err := r.Render(ctx, []byte(`<p>PDF exceeds one hundred bytes</p>`)); err == nil || !strings.Contains(err.Error(), "100 字节") {
+	if _, _, err := r.Render(ctx, []byte(`<p>PDF exceeds one hundred bytes</p>`), DefaultSettings()); err == nil || !strings.Contains(err.Error(), "100 字节") {
 		t.Fatalf("want output limit error, got %v", err)
 	}
 }
@@ -126,7 +148,7 @@ func TestChromeCancellationCleansProfile(t *testing.T) {
 	t.Setenv("TMPDIR", dir)
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
-	_, _, err := r.Render(ctx, []byte(`<p>cancel during Chrome startup</p>`))
+	_, _, err := r.Render(ctx, []byte(`<p>cancel during Chrome startup</p>`), DefaultSettings())
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("want deadline, got %v", err)
 	}

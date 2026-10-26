@@ -6,6 +6,8 @@ import (
 	"errors"
 	"log/slog"
 	"time"
+
+	"github.com/Vanisper/printkit/internal/render"
 )
 
 // Kind 表示提交文档的格式
@@ -20,8 +22,9 @@ const (
 type State string
 
 const (
-	StateQueued      State = "queued"
-	StateRendering   State = "rendering"
+	StateQueued    State = "queued"
+	StateRendering State = "rendering"
+	// StateOutputReady 表示 PDF 已保存且可下载
 	StateOutputReady State = "output_ready"
 	StateFailed      State = "failed"
 )
@@ -56,7 +59,7 @@ type Attempt struct {
 	Error      string     `json:"error,omitempty"`
 }
 
-// Job 是不含文档字节的任务视图，output_ready 仅表示产物可下载
+// Job 是不含文档字节的任务视图
 type Job struct {
 	ID             string    `json:"id"`
 	Kind           Kind      `json:"kind"`
@@ -77,7 +80,8 @@ type Job struct {
 //
 // 实现必须响应上下文取消，并在返回前清理所持有的浏览器进程与临时资源
 type Renderer interface {
-	Render(context.Context, []byte) ([]byte, string, error)
+	// Render 使用任务保存的完整排版设置，不以当前默认值替换
+	Render(ctx context.Context, document []byte, settings render.Settings) ([]byte, string, error)
 }
 
 // Options 配置单个任务执行器，零值限制采用默认值

@@ -4,9 +4,14 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"strings"
 	"time"
+
+	"github.com/Vanisper/printkit/internal/render"
 )
 
 // Run 恢复中断任务并按受理顺序串行执行，直到上下文取消；每个 Service 只能调用一次
@@ -101,5 +106,17 @@ func (s *Service) render(ctx context.Context, task execution) ([]byte, string, e
 	if s.opts.Renderer == nil {
 		return nil, "", errors.New("HTML 渲染器未配置")
 	}
-	return s.opts.Renderer.Render(ctx, task.document)
+	var settings render.Settings
+	decoder := json.NewDecoder(strings.NewReader(task.settings))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&settings); err != nil {
+		return nil, "", fmt.Errorf("读取任务排版设置: %w", err)
+	}
+	if decoder.Decode(new(any)) != io.EOF {
+		return nil, "", errors.New("任务排版设置须为一个 JSON 对象")
+	}
+	if err := settings.Validate(); err != nil {
+		return nil, "", fmt.Errorf("任务排版设置无效: %w", err)
+	}
+	return s.opts.Renderer.Render(ctx, task.document, settings)
 }
