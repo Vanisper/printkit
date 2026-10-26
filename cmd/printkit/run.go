@@ -92,7 +92,7 @@ func serve(ctx context.Context, dir string, cfg config, errOut io.Writer) error 
 	}
 	defer lock.Close()
 
-	renderer, err := render.New(render.Options{ChromePath: cfg.ChromePath, MaxOutputBytes: cfg.MaxOutputBytes})
+	renderer, err := render.NewProcess(ctx, filepath.Join(dir, "render"), render.Options{ChromePath: cfg.ChromePath, MaxOutputBytes: cfg.MaxOutputBytes})
 	if err != nil {
 		return err
 	}

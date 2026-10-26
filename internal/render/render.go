@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/chromedp/cdproto/browser"
 	"github.com/chromedp/cdproto/cdp"
@@ -58,7 +59,7 @@ func New(opts Options) (*Renderer, error) {
 // 输入仅支持 UTF-8 静态 HTML、内联 CSS 和 data URL 资源，脚本或资源失败会使任务失败
 // settings 须为通过 Validate 的完整设置，排版采用该值而不补入默认值
 // 返回前等待独立浏览器退出并清理临时用户目录
-func (r *Renderer) Render(ctx context.Context, input []byte, settings Settings) ([]byte, string, error) {
+func (r *Renderer) Render(ctx context.Context, input []byte, settings Settings) (outputPDF []byte, engine string, resultErr error) {
 	if err := ctx.Err(); err != nil {
 		return nil, "", err
 	}
@@ -82,7 +83,20 @@ func (r *Renderer) Render(ctx context.Context, input []byte, settings Settings) 
 	allocator, cancelAllocator := chromedp.NewExecAllocator(ctx, opts...)
 	defer cancelAllocator()
 	tab, cancelTab := chromedp.NewContext(allocator)
-	defer cancelTab()
+	defer func() {
+		// 正常完成先让 Chrome 关闭自己的子进程；超时或失联仍强制取消并等待 allocator 回收
+		var cleanupErr error
+		if ctx.Err() == nil && chromedp.FromContext(tab).Browser != nil {
+			cleanupCtx, stopCleanup := context.WithTimeout(tab, 2*time.Second)
+			cleanupErr = chromedp.Cancel(cleanupCtx)
+			stopCleanup()
+		}
+		cancelTab()
+		if cleanupErr != nil && ctx.Err() == nil {
+			outputPDF = nil
+			resultErr = errors.Join(resultErr, fmt.Errorf("关闭 Chrome: %w", cleanupErr))
+		}
+	}()
 	version, err := chromedp.CallBrowser(tab, browser.GetVersion, cdp.Empty{})
 	if err != nil {
 		return nil, "", renderError(ctx, "启动 Chrome", err)

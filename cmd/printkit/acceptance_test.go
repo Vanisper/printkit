@@ -15,35 +15,30 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/Vanisper/printkit/internal/jobs"
+	"github.com/Vanisper/printkit/internal/render"
 )
 
 const acceptanceChromeMarker = "PRINTKIT_ACCEPTANCE_CHROME_MARKER"
 
 func TestMain(m *testing.M) {
+	if len(os.Args) == 3 && os.Args[1] == render.WorkerCommand {
+		if err := render.RunWorker(context.Background(), os.Args[2], os.Stdin, os.Stdout); err != nil {
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
 	if marker := os.Getenv(acceptanceChromeMarker); marker != "" {
 		// 专属子进程阻塞浏览器启动，使 CLI 可以确定性地在 rendering 阶段被终止
-		parent := os.Getppid()
 		if err := os.WriteFile(marker, []byte(strconv.Itoa(os.Getpid())), 0600); err != nil {
 			os.Exit(2)
 		}
-		ticker := time.NewTicker(20 * time.Millisecond)
-		deadline := time.NewTimer(45 * time.Second)
-		for os.Getppid() == parent {
-			select {
-			case <-ticker.C:
-			case <-deadline.C:
-				os.Exit(3)
-			}
-		}
-		// 父进程退出后自行结束，不留下测试子进程或触碰其他 Chrome
-		if err := os.WriteFile(marker+".done", []byte("stopped"), 0600); err != nil {
-			os.Exit(4)
-		}
-		os.Exit(0)
+		time.Sleep(45 * time.Second)
+		os.Exit(3)
 	}
 	os.Exit(m.Run())
 }
@@ -188,9 +183,7 @@ func TestAcceptanceCLIInterruptedRendering(t *testing.T) {
 	}
 	saveConfig()
 	marker := filepath.Join(root, "chrome-helper")
-	// 强杀后 allocator 无法清理用户目录，由测试持有并回收本次临时资源
-	profiles := t.TempDir()
-	first := startAcceptanceCLI(t, binary, dir, acceptanceChromeMarker+"="+marker, "TMPDIR="+profiles)
+	first := startAcceptanceCLI(t, binary, dir, acceptanceChromeMarker+"="+marker)
 	base := first.address(t, ctx)
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
@@ -247,11 +240,30 @@ func TestAcceptanceCLIInterruptedRendering(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("被终止的 CLI 未退出")
 	}
-	awaitAcceptance(t, ctx, "测试浏览器子进程退出", func() bool {
-		_, err := os.Stat(marker + ".done")
-		return err == nil
+	cleanupCtx, stopCleanup := context.WithTimeout(ctx, 10*time.Second)
+	defer stopCleanup()
+	awaitAcceptance(t, cleanupCtx, "测试浏览器子进程退出", func() bool {
+		data, err := os.ReadFile(marker)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pid, err := strconv.Atoi(string(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		process, err := os.FindProcess(pid)
+		if err != nil {
+			return true
+		}
+		defer process.Release()
+		return process.Signal(syscall.Signal(0)) != nil
 	})
-	// 重启后使用真实 Chrome，验证持久化恢复；不验证真实 Chrome 被 SIGKILL 后的回收
+	awaitAcceptance(t, cleanupCtx, "重启前的浏览器目录清理", func() bool {
+		_, tempErr := os.Stat(filepath.Join(dir, "render", "tmp"))
+		_, markerErr := os.Stat(filepath.Join(dir, "render", "active"))
+		return os.IsNotExist(tempErr) && os.IsNotExist(markerErr)
+	})
+	// 启动握手中断后使用真实 Chrome，验证持久化任务可以恢复
 	cfg.ChromePath = os.Getenv("PRINTKIT_CHROME_PATH")
 	saveConfig()
 	second := startAcceptanceCLI(t, binary, dir)
