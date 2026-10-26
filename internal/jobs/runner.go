@@ -14,11 +14,22 @@ import (
 	"github.com/Vanisper/printkit/internal/render"
 )
 
-// Run 恢复中断任务并按受理顺序串行执行，直到上下文取消；每个 Service 只能调用一次
+// Run 恢复中断任务并按受理顺序串行执行，直到上下文取消或 Close；每个 Service 只能调用一次
 func (s *Service) Run(ctx context.Context) error {
-	if !s.started.CompareAndSwap(false, true) {
+	s.lifecycle.Lock()
+	if s.closed {
+		s.lifecycle.Unlock()
+		return errors.New("任务服务已关闭")
+	}
+	if s.runDone != nil {
+		s.lifecycle.Unlock()
 		return errors.New("同一任务服务不能重复启动执行器")
 	}
+	done := make(chan struct{})
+	s.runDone = done
+	s.lifecycle.Unlock()
+	// 登记执行与关闭共用一把锁，保证 Close 要么阻止启动，要么等待本次执行结束
+	defer close(done)
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	stop := context.AfterFunc(s.stop, cancel)

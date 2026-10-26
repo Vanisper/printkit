@@ -15,7 +15,6 @@ import (
 	"os"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -26,17 +25,22 @@ import (
 
 // Service 持久保存任务及产物，受理请求取消不会取消已经提交的任务
 type Service struct {
-	db       *sql.DB
-	opts     Options
-	wake     chan struct{}
-	stop     context.Context
-	cancel   context.CancelFunc
-	started  atomic.Bool
-	close    sync.Once
-	closeErr error
+	db        *sql.DB
+	opts      Options
+	wake      chan struct{}
+	stop      context.Context
+	cancel    context.CancelFunc
+	lifecycle sync.Mutex
+	runDone   chan struct{}
+	closed    bool
+	close     sync.Once
+	closeErr  error
 }
 
-// Open 打开版本化 SQLite 存储，零值限制使用默认值；同一文件只允许一个进程执行任务
+// Open 打开版本化 SQLite 存储，零值限制使用默认值
+//
+// 调用方须在打开前取得数据库的独占执行权，并持有到 Close 返回
+// ctx 只控制存储初始化，执行生命周期由 Run 的上下文和 Close 控制
 func Open(ctx context.Context, path string, opts Options) (*Service, error) {
 	if path == "" {
 		return nil, fmt.Errorf("%w: 数据库路径为空", ErrInvalid)
@@ -77,10 +81,19 @@ func Open(ctx context.Context, path string, opts Options) (*Service, error) {
 	return &Service{db: db, opts: opts, wake: make(chan struct{}, 1), stop: stop, cancel: cancel}, nil
 }
 
-// Close 停止执行并关闭存储，可重复调用；正在执行的任务留待下次启动恢复
+// Close 取消并等待已启动的 Run 完成资源清理，再关闭存储，可并发重复调用
+//
+// 关闭开始后拒绝新的 Run；正在执行的任务留待下次启动恢复
 func (s *Service) Close() error {
 	s.close.Do(func() {
+		s.lifecycle.Lock()
+		s.closed = true
+		done := s.runDone
+		s.lifecycle.Unlock()
 		s.cancel()
+		if done != nil {
+			<-done
+		}
 		s.closeErr = s.db.Close()
 	})
 	return s.closeErr
